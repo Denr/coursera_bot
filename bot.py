@@ -1,3 +1,6 @@
+#! /usr/bin/env python
+# -*- coding: utf-8 -*-
+
 import os
 import re
 import uuid
@@ -11,11 +14,10 @@ from telebot import types
 from db import db, User, Place, DoesNotExist
 from settings import TOKEN, API_KEY
 
-START, ADDRESS, PHOTO, LOCATION = range(4)
+START, ADDRESS, PHOTO, LOCATION, NEAREST = range(5)
 USER_STATE = defaultdict(lambda: START)
 PLACES = defaultdict(lambda: {})
 bot = TeleBot(TOKEN)
-g_maps = googlemaps.Client(key=API_KEY)
 
 
 def get_state(message):
@@ -60,6 +62,7 @@ def send_welcome(message):
     bot.send_message(message.chat.id, 'Список доступных команд:\n'
                                       '/add - добавить новое место\n'
                                       '/list - отобразить добавленные места\n'
+                                      '/nearest - отобразить места рядом с вами\n'
                                       '/reset - удалить все добавленные локации\n'
                                       '/help - отобразить список доступных команд')
 
@@ -129,6 +132,63 @@ def list_command(message):
     db.close()
 
 
+@bot.message_handler(commands=['nearest'])
+def nearest_command(message):
+    try:
+        User.get(User.user_id == message.chat.id)
+        bot.send_message(message.chat.id, 'Отправьте свою геопозицию или введите /cancel чтобы отменить.')
+        update_state(message, NEAREST)
+    except DoesNotExist:
+        bot.send_message(message.chat.id,
+                         'У вас нет сохраненных мест. Используйте команду /add чтобы добавить новое место.')
+
+
+@bot.message_handler(func=lambda message: get_state(message) == NEAREST, content_types=['location'])
+def handle_nearest(message):
+    g_maps = googlemaps.Client(key=API_KEY)
+    latitude = message.location.latitude
+    longitude = message.location.longitude
+    send_no_places_message = False
+    error_message = False
+    start_message = bot.send_message(message.chat.id, 'Ищем места рядом с вами...')
+    user = User.get(User.user_id == message.chat.id)
+    for place in user.places:
+        location = place.location.replace(' ', '').split(',')
+        distance = distance_matrix(client=g_maps, origins={"lat": latitude, "lng": longitude},
+                                   destinations={"lat": location[0], "lng": location[1]})
+        if distance.get('status') == 'OK':
+            try:
+                elements = distance.get('rows')[0].get('elements')[0]
+                if elements.get('status') == 'OK':
+                    error_message = False
+                    distance = elements.get('distance').get('text')
+                    if 'km' in distance:
+                        distance = distance.split(' ')[0].replace(',', '.')
+                        if float(distance) <= 0.5:
+                            bot.send_message(message.chat.id, place.name)
+                            bot.send_location(message.chat.id, latitude=location[0], longitude=location[1])
+                            send_no_places_message = False
+                        else:
+                            send_no_places_message = True
+                    else:
+                        bot.send_message(message.chat.id, place.name)
+                        bot.send_location(message.chat.id, latitude=location[0], longitude=location[1])
+                else:
+                    send_no_places_message = True
+            except (AttributeError, IndexError):
+                bot.edit_message_text(text='Не удалось получить ближайшие места.', chat_id=message.chat.id,
+                                      message_id=start_message.message_id)
+        else:
+            error_message = distance.get('status')
+    if send_no_places_message:
+        bot.edit_message_text(text='Поблизости нет ваших мест.', chat_id=message.chat.id,
+                              message_id=start_message.message_id)
+    if error_message:
+        bot.edit_message_text(text='К сожалению что-то пошло не так. Ошибка: {}'.format(error_message),
+                              chat_id=message.chat.id,
+                              message_id=start_message.message_id)
+
+
 def create_keyboard():
     keyboard = types.InlineKeyboardMarkup(row_width=2)
     answers = ['Да', 'Нет']
@@ -158,41 +218,6 @@ def confirm_reset_handler(callback_query):
         bot.send_message(message.chat.id, 'Ваши сохраненные места удалены!')
     db.close()
     update_state(message, START)
-
-
-@bot.message_handler(content_types=['location'])
-def nearest_places(message):
-    latitude = message.location.latitude
-    longitude = message.location.longitude
-    send_no_places_message = False
-    start_message = bot.send_message(message.chat.id, 'Ищем места рядом с вами...')
-    try:
-        user = User.get(User.user_id == message.chat.id)
-        for place in user.places:
-            location = place.location.replace(' ', '').split(',')
-            distance = distance_matrix(client=g_maps, origins={"lat": latitude, "lng": longitude},
-                                       destinations={"lat": location[0], "lng": location[1]})
-            if distance.get('status') == 'OK':
-                distance = distance.get('rows')[0].get('elements')[0].get('distance').get('text')
-                if 'km' in distance:
-                    distance = distance.split(' ')[0].replace(',', '.')
-                    if float(distance) <= 0.5:
-                        bot.send_message(message.chat.id, place.name)
-                        bot.send_location(message.chat.id, latitude=location[0], longitude=location[1])
-                        send_no_places_message = False
-                    else:
-                        send_no_places_message = True
-                else:
-                    bot.send_message(message.chat.id, place.name)
-                    bot.send_location(message.chat.id, latitude=location[0], longitude=location[1])
-            else:
-                bot.send_message(message.chat.id, 'К сожалению что-то пошло не так.')
-        if send_no_places_message:
-            bot.edit_message_text(text='Поблизости нет ваших мест.', chat_id=message.chat.id,
-                                  message_id=start_message.message_id)
-    except DoesNotExist:
-        bot.send_message(message.chat.id,
-                         'У вас нет сохраненных мест. Используйте команду /add чтобы добавить новое место.')
 
 
 if __name__ == '__main__':

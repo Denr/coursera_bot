@@ -110,7 +110,7 @@ def handle_location(message):
         else:
             bot.send_message(message.chat.id, 'Отправьте корректные координаты! Например: 58.391693, 26.359372.')
     elif message.location:
-        update_place(message, 'location', '{}, {}'.format(message.location.longitude, message.location.latitude))
+        update_place(message, 'location', '{}, {}'.format(message.location.latitude, message.location.longitude))
         save_place(message)
         update_state(message, START)
 
@@ -156,6 +156,7 @@ def handle_nearest(message):
         location = place.location.replace(' ', '').split(',')
         distance = distance_matrix(client=g_maps, origins={"lat": latitude, "lng": longitude},
                                    destinations={"lat": location[0], "lng": location[1]})
+        print(distance)
         if distance.get('status') == 'OK':
             try:
                 elements = distance.get('rows')[0].get('elements')[0]

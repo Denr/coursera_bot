@@ -3,6 +3,7 @@
 
 import os
 import re
+import shutil
 import uuid
 from collections import defaultdict
 
@@ -217,7 +218,9 @@ def confirm_reset_handler(callback_query):
     if answer == 'Да':
         User.get(User.user_id == message.chat.id).delete_instance()
         bot.send_message(message.chat.id, 'Ваши сохраненные места удалены!')
-    db.close()
+        db.close()
+        photo_user_folder = 'user_{}'.format(str(message.chat.id))
+        shutil.rmtree(photo_user_folder, ignore_errors=True)
     update_state(message, START)
 
 

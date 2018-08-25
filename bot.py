@@ -55,6 +55,7 @@ def save_place(message):
         Place.create(user=user, name=place.get('name'), photo=photo_path,
                      location=place.get('location'))
     db.close()
+    PLACES.pop(message.chat.id, None)
     bot.send_message(message.chat.id, 'Ок, место сохранено.')
 
 
@@ -92,8 +93,8 @@ def handle_address(message):
 
 @bot.message_handler(func=lambda message: get_state(message) == PHOTO, content_types=['photo'])
 def handle_photo(message):
-    fileID = message.photo[-1].file_id
-    update_place(message, 'photo_path', bot.get_file(fileID).file_path)
+    file_id = message.photo[-1].file_id
+    update_place(message, 'photo_path', bot.get_file(file_id).file_path)
     bot.send_message(message.chat.id,
                      'Теперь отправьте координаты'
                      ' (например: 58.391693, 26.359372) или геопозицию места'
@@ -104,8 +105,9 @@ def handle_photo(message):
 @bot.message_handler(func=lambda message: get_state(message) == LOCATION, content_types=['text', 'location'])
 def handle_location(message):
     if message.text:
-        if re.search(r'\d+\.\d+,\s\d+\.\d+', message.text):
-            update_place(message, 'location', message.text)
+        lan_lng = re.search(r'(\d+\.\d+,\s?\d+\.\d+)', message.text)
+        if lan_lng:
+            update_place(message, 'location', lan_lng.group(1))
             save_place(message)
             update_state(message, START)
         else:
@@ -165,13 +167,16 @@ def handle_nearest(message):
                     error_message = False
                     distance = elements.get('distance').get('text')
                     if 'km' in distance:
-                        distance = distance.split(' ')[0].replace(',', '.')
-                        if float(distance) <= 0.5:
-                            bot.send_message(message.chat.id, place.name)
-                            bot.send_location(message.chat.id, latitude=location[0], longitude=location[1])
-                            send_no_places_message = False
-                        else:
-                            send_no_places_message = True
+                        try:
+                            distance = float(distance.split(' ')[0].replace(',', '.'))
+                            if distance <= 0.5:
+                                bot.send_message(message.chat.id, place.name)
+                                bot.send_location(message.chat.id, latitude=location[0], longitude=location[1])
+                                send_no_places_message = False
+                            else:
+                                send_no_places_message = True
+                        except ValueError:
+                            error_message = True
                     else:
                         bot.send_message(message.chat.id, place.name)
                         bot.send_location(message.chat.id, latitude=location[0], longitude=location[1])
